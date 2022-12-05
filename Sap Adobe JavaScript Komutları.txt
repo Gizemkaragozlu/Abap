@@ -1,0 +1,65 @@
+                Sap Adobe JavaScript
+////////////////////////////////////////////////
+                Dizin numarasıyla bir alt forma erişme
+
+// Access a subform with an index number. When using xfa.resolveNode,the search 
+// starts at the top of the form hierarchy and moves down.  
+var nIndex = 2; 
+var sSOM = "Subform2[" + nIndex + "]"; 
+var oSubform = xfa.resolveNode(sSOM); 
+oSubform.NumericField4.rawValue = "25";
+////////////////////////////////////////////////
+               Bir belgedeki metin alanlarını sayma
+
+// Count the number of text fields in a document.  
+// Get the field containers from each page. 
+for (var nPageCount = 0; nPageCount < xfa.host.numPages; nPageCount++) { 
+ 
+    var oFields = xfa.layout.pageContent(nPageCount, "field"); 
+    var nNodesLength = oFields.length; 
+    var nCount = 0; 
+ 
+    for (var nNodeCount = 0; nNodeCount < nNodesLength; nNodeCount++) { 
+ 
+        if (oFields.item(nNodeCount).ui.oneOfChild.className == "textEdit") { 
+            nCount++; 
+        } 
+    } 
+    TextField1.rawValue = nCount; 
+}
+/////////////////////////////////////////////////
+               Sayfa numarasını almak
+
+// Use the page layout methods to get the current page number. 
+TextField1.rawValue = xfa.layout.page(this); // 1-based. 
+TextField2.rawValue = xfa.layout.absPage(this); // 0-based. 
+///////////////////////////////////////////////////
+Sayfalamayı biçimlendirme
+
+// Use the layout page and pageCount methods to format the pagination. 
+TextField1.rawValue = "Page " + xfa.layout.page(this) + " of " + xfa.layout.pageCount();
+////////////////////////////////////////////////////
+              Toplamları hesaplama
+// Access a field in a repeating subform by looping through the node list. 
+var oFields = xfa.resolveNodes("Subform2[*].NumericField4"); 
+var nNodesLength = oFields.length; 
+var nSum = 0; 
+for (var nNodeCount = 0; nNodeCount < nNodesLength; nNodeCount++) { 
+    nSum += oFields.item(nNodeCount).rawValue; 
+} 
+TextField1.rawValue = nSum;
+//////////////////////////////////////////////////////
+        Bir alanı görünür veya görünmez olacak şekilde ayarlama
+// If a field is visible, make it invisible and vice versa. 
+if(Field1.presence == "visible") 
+{ 
+    Field1.presence = "invisible"; 
+} 
+else 
+{ 
+    Field1.presence = "visible"; 
+}
+
+
+
+

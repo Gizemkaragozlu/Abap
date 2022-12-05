@@ -1,0 +1,56 @@
+=> Seçim Ekranında bir tarih parametresini gizle
+/////////////////////////////////////////////////////////////////////////
+At SELECTION-SCREEN.
+Loop at screen.
+if screen-name = 'XXXX'.                       (Basitçe)
+Screen-input = '0'. (Ekran girişi gözükmesin)                                
+screen-visible = '0'. (Ekran görünürlüğü 0 gözükmesin)
+endif.
+modify screen.
+endloop
+////////////////////////////////////////////////////////////////////////////
+PARAMETERS: R1 RADIOBUTTON GROUP RAD1 default 'X' USER-COMMAND DUMMY,
+R2 RADIOBUTTON GROUP RAD1 .                   (Detaylı)
+IF R1 = 'X'.
+LOOP AT SCREEN.
+IF SCREEN-GROUP1 EQ 'DI1'.
+SCREEN-ACTIVE
+= '1'.               //Ekran aktif olsun
+SCREEN-INPUT
+= '1'.               //Ekran girişi gözüksün
+MODIFY SCREEN.
+CLEAR: S_LGORT.
+REFRESH: s_LGORT.
+ENDIF.
+
+IF SCREEN-GROUP1 EQ 'DI2'.
+SCREEN-ACTIVE
+= '0'.
+SCREEN-INPUT
+= '0'.
+MODIFY SCREEN.
+ENDIF.
+ENDLOOP.
+ENDIF.
+
+IF R2 = 'X'.
+LOOP AT SCREEN.
+IF SCREEN-GROUP1 EQ 'DI1'.
+SCREEN-ACTIVE
+= '0'.
+SCREEN-INPUT
+= '0'.
+MODIFY SCREEN.
+CLEAR: S_KUNNR.
+REFRESH: s_KUNNR.
+ENDIF.
+
+IF SCREEN-GROUP1 EQ 'DI2'.
+SCREEN-ACTIVE
+= '1'.
+SCREEN-INPUT
+= '1'.
+MODIFY SCREEN.
+ENDIF.
+ENDLOOP.
+ENDIF.

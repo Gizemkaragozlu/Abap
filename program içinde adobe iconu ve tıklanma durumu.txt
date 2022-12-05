@@ -1,0 +1,115 @@
+Tablonu üzerine adobe çıktı için buton oluşturma ve işlevsel hale getirme
+-------TOP-------------
+"Adobe Table
+data gt_table type TABLE OF (Table name) WITH HEADER LINE.
+
+
+
+form user_command using p_ucomm type sy-ucomm
+                        p_selfield type slis_selfield.
+  data: lv_mes     type string,
+        lv_index   type i,
+        lv_index_c type char5,
+        lv_line    type string.
+
+  case p_ucomm.
+    when '&LFO' or '&NFO'.
+      loop at gt_list.
+        if gt_list-check eq 'X'.
+          add 1 to lv_index.
+          lv_index_c = lv_index.
+          concatenate lv_index_c '.' into lv_index_c.
+          concatenate lv_index_c gt_list-arktx  into lv_line.
+          concatenate lv_mes lv_line into lv_mes separated by '\'.
+        endif.
+      endloop.
+      message lv_mes type 'I'.
+    when '&ADOBE'.
+      data: lv_size TYPE i.
+
+      loop at gt_list.
+        if gt_list-check eq 'X'.
+          add 1 to lv_size.
+          move-corresponding gt_list to gt_table.
+          append gt_table to gt_table[].
+        endif.
+      endloop.
+      IF lv_size gt 0.
+           perform get_adobe using gt_table[].
+      else.
+          MESSAGE 'Bu Function Sadece Secili Satir Varsa Calisir' TYPE 'I' DISPLAY LIKE 'W'.
+      ENDIF.
+
+  endcase.
+endform.
+----------------------------------------
+*&---------------------------------------------------------------------*
+*&      Form  GET_ADOBE
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+form get_adobe using p_table type zfc_vb_tt.
+
+  data: fm_name         type rs38l_fnam,      " CHAR 30 0 function name tutan yapı
+        fp_docparams    type sfpdocparams,    " Structure  SFPDOCPARAMS Short Description  Form Parameters for Form Processing
+        fp_outputparams type sfpoutputparams. " Structure  SFPOUTPUTPARAMS Short Description  Form Processing Output Parameter
+
+
+* Sets the output parameters and opens the spool job
+  call function 'FP_JOB_OPEN'                   "& Form Processing: Call Form
+    changing
+      ie_outputparams = fp_outputparams
+    exceptions
+      cancel          = 1
+      usage_error     = 2
+      system_error    = 3
+      internal_error  = 4
+      others          = 5.
+  if sy-subrc <> 0.
+*            <error handling>
+  endif.
+
+
+*&---- Get the name of the generated function module
+  call function 'FP_FUNCTION_MODULE_NAME'           "& Form Processing Generation
+    exporting
+      i_name     = 'Z_EXAMPLE_VB' "Adobe form adı yazılır
+    importing
+      e_funcname = fm_name.
+
+
+
+  call function fm_name
+    exporting
+*     /1BCDWB/DOCPARAMS        =
+      gt_table       = p_table
+      gv_title       = 'Selected Rows'
+* IMPORTING
+*     /1BCDWB/FORMOUTPUT       =
+    exceptions
+      usage_error    = 1
+      system_error   = 2
+      internal_error = 3
+      others         = 4.
+  if sy-subrc <> 0.
+* Implement suitable error handling here
+  endif.
+
+
+
+*&---- Close the spool job
+  call function 'FP_JOB_CLOSE' "Form işlemi bitnce
+*    IMPORTING
+*     E_RESULT             =
+    exceptions
+      usage_error    = 1
+      system_error   = 2
+      internal_error = 3
+      others         = 4.
+  if sy-subrc <> 0.
+*            <error handling>
+  endif.
+endform.
