@@ -1,0 +1,20 @@
+*&---------------------------------------------------------------------*
+*& Report ZGK_SY_UNAME
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+REPORT ZGK_SY_UNAME.
+PARAMETERS: p_uname TYPE usr21-bname.       "p_uname parametre belirledik usr21-bname standart tablomuzdan verileri çekiyoruz.
+
+SELECT u~bname,                             "tablodan bname,persnumber,addrnumber,smtp_addr kolonları çektik.
+       u~persnumber,
+       u~addrnumber,
+       a~smtp_addr
+  FROM usr21 AS u
+  INNER JOIN adr6 AS a  ON ( a~persnumber = u~persnumber AND a~addrnumber = u~addrnumber ) "adr6 tablom ile birleştiriyoruz
+  INTO TABLE @DATA(it_userdata)  "it_userdata geçici tablo
+  WHERE u~bname = @p_uname.      "seçim ekranımda bnmame kullanıcı adım gözüksün.
+
+LOOP AT it_userdata ASSIGNING FIELD-SYMBOL(<u>). "geçici fieldsymbol
+  WRITE:/ <u>-bname, <u>-smtp_addr.              "ekrana bname ve smtaddr yani kullanıcı adı ve e-postası yazılsın
+ENDLOOP.

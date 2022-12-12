@@ -1,0 +1,143 @@
+*&---------------------------------------------------------------------*
+*& Report ZZZ_DYNAMIC_IMAGE
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+report zzz_dynamic_image.
+
+
+data: lt_website type zzz_tt_website,  "Tablo
+      ls_website type zzz_s_website,   "Structure
+      lv_qrurl   type string.          "url string türünde
+
+
+ls_website-siteurl = 'https://github.com/Gizemkaragozlu'. "Site url
+append ls_website to lt_website.                          "Site url structure ve table türünde alıp apend ediyoruz.
+ls_website-siteurl = 'https://www.youtube.com/watch?v=uuQfoeFN8cs'.
+append ls_website to lt_website.
+ls_website-siteurl = 'https://pub.dev/'.
+append ls_website to lt_website.
+
+loop at lt_website into ls_website.
+  concatenate 'http://encode.i-nigma.com/QRCode/img.php?d='
+                  ls_website-siteurl
+                  '&c=&s=10'
+                  into lv_qrurl.
+
+  perform get_html using lv_qrurl changing ls_website-logo.
+
+  modify lt_website from ls_website.
+endloop.
+
+data fp_outputparams   type sfpoutputparams.
+data lv_interface_type type fpinterfacetype.
+data lv_funcname       type funcname.
+data ls_formoutput     type fpformoutput.
+data ls_docparams      type sfpdocparams.
+
+fp_outputparams-pdftagged = 'X'.
+fp_outputparams-nodialog  = 'X'.
+fp_outputparams-dest      = 'ZPDF'.
+fp_outputparams-preview   = 'X'.
+fp_outputparams-getpdf    = ' '.
+
+ls_docparams-langu   = 'T'.
+ls_docparams-country = 'TR'.
+
+call function 'FP_JOB_OPEN' " adobe çağırmak için kullanılır
+  changing
+    ie_outputparams = fp_outputparams
+  exceptions
+    cancel          = 1
+    usage_error     = 2
+    system_error    = 3
+    internal_error  = 4
+    others          = 5.
+
+call function 'FP_FUNCTION_MODULE_NAME' "adobe funnction çağırır ve ismini tanımlamamızı sağlar.
+  exporting
+    i_name           = 'ZZZ_F_WEBSITE'
+  importing
+    e_funcname       = lv_funcname
+    e_interface_type = lv_interface_type.
+
+call function lv_funcname             " /1BCDWB/SM00000209 adobe function name
+  exporting
+   /1BCDWB/DOCPARAMS        = ls_docparams
+    t_website                = lt_website
+ IMPORTING
+   /1BCDWB/FORMOUTPUT       = ls_formoutput
+ EXCEPTIONS
+   USAGE_ERROR              = 1
+   SYSTEM_ERROR             = 2
+   INTERNAL_ERROR           = 3
+   OTHERS                   = 4
+          .
+
+call function 'FP_JOB_CLOSE'
+  exceptions
+    usage_error    = 1
+    system_error   = 2
+    internal_error = 3
+    others         = 4.
+
+*&---------------------------------------------------------------------*
+*&      Form  get_html
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_URL      text
+*      -->P_DATA     text
+*----------------------------------------------------------------------*
+form get_html  using    p_url
+               changing p_data.
+
+  data lv_client type ref to if_http_client.
+
+* Create client
+  call method cl_http_client=>create_by_url
+    exporting
+      url                = p_url
+    importing
+      client             = lv_client
+    exceptions
+      argument_not_found = 1
+      plugin_not_active  = 2
+      internal_error     = 3
+      others             = 4.
+  if sy-subrc ne 0.
+    message id sy-msgid type sy-msgty number sy-msgno
+      with sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  endif.
+
+  lv_client->request->set_header_field( name  = '~request_method'
+                                          value = 'GET' ).
+
+* Get request:
+  call method lv_client->send
+    exceptions
+      http_communication_failure = 1
+      http_invalid_state         = 2
+      http_processing_failed     = 3
+      others                     = 4.
+  if sy-subrc ne 0.
+    message id sy-msgid type sy-msgty number sy-msgno
+      with sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  endif.
+
+* Prepare client-receive:
+  call method lv_client->receive
+    exceptions
+      http_communication_failure = 1
+      http_invalid_state         = 2
+      http_processing_failed     = 3
+      others                     = 4.
+
+* Get HTML:
+  clear p_data.
+  p_data = lv_client->response->get_data( ).
+
+
+
+
+endform.

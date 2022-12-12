@@ -1,0 +1,316 @@
+*&---------------------------------------------------------------------*
+*& Report ZGK_TOPLU
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+REPORT ZGK_TOPLU.
+include ZGK_TOPLU_top.
+INCLUDE ZGK_TOPLU_slc.
+INCLUDE ZGK_TOPLU_cls.
+INCLUDE ZGK_TOPLU_pbo.
+INCLUDE ZGK_TOPLU_pai.
+
+INITIALIZATION.
+CREATE OBJECT go_local.
+
+START-OF-SELECTION.
+  go_local->get_data( ). "Perform gibi düşün
+  go_local->prepare_display( ).
+  go_local->display_alv( ).
+
+CALL SCREEN 0100.
+////////////////////////////////////////////////////////////////////////
+*&---------------------------------------------------------------------*
+*&  Include           ZGK_TOPLU_TOP
+*&---------------------------------------------------------------------*
+CLASS cls_local DEFINITION DEFERRED.
+
+DATA: go_local             TYPE REF TO cls_local,
+*      gs_formoutput        TYPE fpformoutput,
+      go_container         TYPE REF TO cl_gui_custom_container.
+
+DATA: gv_matnr   TYPE mara-matnr, " Selection-screen
+      gv_ersda TYPE mara-ersda.   "Selection-screen
+
+  TYPES: BEGIN OF gt_outtab, "Kolon tip tablo kolon
+         matnr     TYPE mara-matnr,
+         ersda     TYPE  mara-ersda,
+         stprs     TYPE  mbew-stprs,
+         werks     TYPE  mard-werks,
+         timestamp TYPE   mbew-timestamp,
+         cell_color type lvc_t_scol, "Hücre rengi
+         line_color TYPE char4,
+    END OF gt_outtab.
+
+data:gs_cell_color type lvc_s_scol. "Hücre regi için structure.
+////////////////////////////////////////////////////////////////////////
+*&---------------------------------------------------------------------*
+*&  Include           ZGK_TOPLU_SLC
+*&---------------------------------------------------------------------*
+TYPE-POOLS: icon.
+SELECTION-SCREEN:
+BEGIN OF BLOCK b1  WITH FRAME TITLE text-001 .
+
+SELECT-OPTIONS: s_matnr FOR gv_matnr , "OBLIGATORY zorunlu olur
+                s_ersda   for gv_ersda.
+
+PARAMETERS: p_werks RADIOBUTTON GROUP gr1 user-command gr1, "Radio butonlarımı tanımladım
+            p_total RADIOBUTTON GROUP gr1.
+
+SELECTION-SCREEN : END OF BLOCK b1.
+
+*/////////////////////////////////////////////
+SELECTION-SCREEN:                             "Seçim Ekranında gözüksün
+PUSHBUTTON /1(40) button1 USER-COMMAND but1.  "Butonu tanımladık
+*///////////////////////////////////////////////
+AT SELECTION-SCREEN.                           "Seçim Ekranında
+ CASE s_matnr.                                 "Buna basıldığında table ismi de yazılır
+WHEN 'BUT1'.                                   "But 1(buton 1) tıklandığında
+MESSAGE 'Buton 1 tıklandı.' TYPE 'I'.          " Bu mesajı yazsın.
+ENDCASE.
+
+at selection-screen output.                    "Seçim ekranı çıkışında.
+loop at screen.                                "Döngü
+if screen-name = 'P_WERKS'.                    "ekran ismi p_werks
+ screen-active = 0.                            "ekranda aktif gözüksün mü 0 gözükmesin demek 1 olursa gözükür.
+ modify screen.                                "Ekran değiştir
+endif.                                         "Şartımı bitir.
+ENDLOOP.                                       "Düngümü bitir.
+*//////////////////////////////////////////////
+INITIALIZATION.                                "Başlangıç olarak
+ button1 = 'Button 1'.                         "buton1 de Button 1 yazsın.
+
+    CALL FUNCTION 'ICON_CREATE'                "Butonumu şekillendiren çağrı methodu
+    EXPORTING
+      name   = icon_okay                       "hangi ikon olacağını yazıyoruz okey iconu koyduk
+      text   = 'Kaydet'                        "Butonun üzerindeki isim ne olsun Kaydet olsun
+      info   = 'Click to Continue'             "bilgi olarak ne yazsın devam et.
+    IMPORTING
+      RESULT = button1                         "hangi butonu çağırdığımızı yazıyoruz button1
+    EXCEPTIONS
+      OTHERS = 0.
+////////////////////////////////////////////////////////////////////////
+*&---------------------------------------------------------------------*
+*&  Include           ZGK_TOPLU_CLS
+*&---------------------------------------------------------------------*
+class cls_local definition.
+  public section.
+    methods: display_alv, prepare_display,pf_status_set, get_data. "Form gibi.
+
+    data: alv_grid  type ref to cl_gui_alv_grid, "alv
+          layout    type lvc_s_layo,             "layout
+          gt_outtab type table of ztoplu_s,       "table
+          gs_outtab type ztoplu_s,                 "Tablomun Structure
+          fieldcat  type lvc_t_fcat,              "fieldcatalog
+          gs_fcat   type lvc_s_fcat.              "fieldcatalog structure
+
+
+endclass.
+
+class cls_local implementation.
+  method get_data.
+
+    select                                             "mara,mbew,mard tabloları joinlendi..
+           mara~matnr,
+           mara~ersda,
+           mbew~stprs,
+           mard~werks,
+           mbew~timestamp
+           from mara
+           inner join mbew on mbew~matnr eq mara~matnr
+           inner join mard on mard~matnr eq mara~matnr
+           where mara~matnr in @s_matnr and mara~ersda in @s_ersda "Selection-screen koşullarım.
+           into corresponding fields of table @gt_outtab.
+
+
+    append initial line to gt_outtab.                   "tablonun en altına boş satır ekler.
+
+
+    loop at gt_outtab assigning field-symbol(<fs_out>).
+      case <fs_out>-timestamp.                         "timestamp 0 olduğunda satırı komple turuncu yapar
+        when 0.
+          <fs_out>-line_color = 'C710'.
+      endcase.
+
+      call function 'CONVERSION_EXIT_ALPHA_OUTPUT' "Read table için yazıldı.
+        exporting
+          input  = <fs_out>-matnr
+        importing
+          output = <fs_out>-matnr.
+    endloop.
+
+
+
+*      READ TABLE gt_outtab INTO gs_outtab INDEX 3.
+*     READ TABLE gt_outtab INTO gs_outtab with key matnr = '3'.
+    "data lv_total type int4.
+    data : lv_total type p decimals 2. "Decimals türünde
+
+
+
+    loop at gt_outtab assigning field-symbol(<fs_outtab>).
+      data timestamp_c type char15.
+      timestamp_c =  <fs_outtab>-timestamp.
+      <fs_outtab>-timestamp = timestamp_c(2). "Timestamp iki karakterini alır .
+*
+*      DATA gv_total TYPE char30.
+*             add <fs_outtab>-stprs to gv_total.
+
+      case p_werks . " radio butonum werks seçildiği zaman 0 olsun.
+        when 'X'.
+          <fs_outtab>-werks = 0.
+      endcase.
+
+      add <fs_outtab>-stprs to lv_total.
+      if not line_exists( gt_outtab[ sy-tabix + 1 ] ). "gt_outtab kolonlarından sonraki ilk kolona lv_total strps kolon toplamını yazdır.
+        <fs_outtab>-stprs = lv_total.
+      endif.
+    endloop.
+
+  endmethod.
+
+
+  method prepare_display.
+    field-symbols <lfs_fcat> type lvc_s_fcat.
+
+
+
+
+    create object alv_grid
+      exporting
+        i_parent = cl_gui_custom_container=>screen0
+      exceptions
+        others   = 0.
+
+
+    clear layout.       "Layout kısmı
+    layout-zebra      = abap_true.
+*    layout-sel_mode   = 'A'.
+    layout-no_toolbar = 'X'.
+    layout-col_opt    = 'X'.
+    layout-cwidth_opt = 'X'.
+    layout-info_fname = 'LINE_COLOR'.  "// kolon bazında renk
+    layout-ctab_fname = 'CELL_COLOR'. "// hücre bazında renk
+
+
+    clear fieldcat[].
+    call function 'LVC_FIELDCATALOG_MERGE' "structure
+      exporting
+        i_structure_name = 'ZTOPLU_S'
+      changing
+        ct_fieldcat      = fieldcat
+      exceptions
+        others           = 0.
+
+    "Fieldcatalog
+
+    loop at fieldcat assigning <lfs_fcat>.
+      case <lfs_fcat>-fieldname.
+        when 'MATNR'.
+          <lfs_fcat>-scrtext_s = 'Material'.
+        when 'ERSDA'.
+          <lfs_fcat>-scrtext_s = 'Created On'.
+        when 'STPRS'.
+          <lfs_fcat>-scrtext_s = 'Standard price '.
+          <lfs_fcat>-edit      = 'X'.
+        when 'WERKS'.
+          <lfs_fcat>-scrtext_s = 'Werks '.
+        when 'TIMESTAMP'.
+          <lfs_fcat>-scrtext_s = 'Time '.
+      endcase.
+
+    endloop.
+
+  endmethod.
+  method  pf_status_set. "SAPLSALV ile standardı kopyaladık ekrana yansıtmamızı sağlayan kod.
+    set pf-status 'STANDARD'.
+  endmethod.
+
+  method display_alv.  "alv ekrana yansıtma
+    call method alv_grid->set_table_for_first_display
+      exporting
+        is_layout       = layout               " Layout
+      changing
+        it_outtab       = gt_outtab            " Output Table
+        it_fieldcatalog = fieldcat.          " Field Catalog
+
+
+    call method alv_grid->register_edit_event
+      exporting
+        i_event_id = cl_gui_alv_grid=>mc_evt_modified
+      exceptions
+        error      = 1
+        others     = 2.
+
+    call method alv_grid->register_edit_event
+      exporting
+        i_event_id = cl_gui_alv_grid=>mc_evt_enter
+      exceptions
+        error      = 1
+        others     = 2.
+
+  endmethod.
+endclass.
+////////////////////////////////////////////////////////////////////////
+*&---------------------------------------------------------------------*
+*&  Include           ZGK_TOPLU_PBO
+*&---------------------------------------------------------------------*
+*&---------------------------------------------------------------------*
+*&      Module  STATUS_0100  OUTPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+module status_0100 output.
+  SET PF-STATUS '0100'.
+*  SET TITLEBAR 'xxx'.
+endmodule.
+///////////////////////////////////////////////////////////////
+*&---------------------------------------------------------------------*
+*&  Include           ZGK_TOPLU_PAI
+*&---------------------------------------------------------------------*
+*&---------------------------------------------------------------------*
+*&      Module  USER_COMMAND_0100  INPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+module user_command_0100 input.
+  CASE sy-ucomm.
+    WHEN '&BACK' .
+    SET SCREEN 0.
+
+*
+*          DATA: lv_ans(1).
+*      CALL FUNCTION 'POPUP_TO_CONFIRM'  "Popoup ekranı kaydedip çıkmak için
+*        EXPORTING
+*          titlebar              = 'İşlem gerçekleştiriliyor...'
+**         DIAGNOSE_OBJECT       = ' '
+*          text_question         = 'Database tablosu üzerinde değişiklik yapılacak ve dönüşü olmayacak. Değişikliği kaydetmek istediğinizden emin misiniz?'
+*          text_button_1         = 'EVET'
+*          icon_button_1         = 'ICON_CHECKED'
+*          text_button_2         = 'HAYIR'
+*          icon_button_2         = 'ICON_CANCEL'
+*          default_button        = '1'
+*          display_cancel_button = ' '
+**         USERDEFINED_F1_HELP   = ' '
+**         START_COLUMN          = 25
+**         START_ROW             = 6
+*          popup_type            = 'ICON_MESSAGE_ERROR'
+**         IV_QUICKINFO_BUTTON_1 = ' '
+**         IV_QUICKINFO_BUTTON_2 = ' '
+*        IMPORTING
+*          answer                = lv_ans
+** TABLES
+**         PARAMETER             =
+** EXCEPTIONS
+**         TEXT_NOT_FOUND        = 1
+**         OTHERS                = 2
+*        .
+*      IF lv_ans EQ '2'.
+*        WRITE 'İşlemlerinizi kaydetmekten vazgeçtiniz!'.
+*      ENDIF.
+*
+*
+  ENDCASE.
+
+endmodule.
+/////////////////////////////////////////////////////////////

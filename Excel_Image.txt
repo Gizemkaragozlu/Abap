@@ -1,0 +1,146 @@
+*&---------------------------------------------------------------------*
+*& Report ZGK_EXCEL_IMAGE
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+REPORT ZGK_EXCEL_IMAGE.
+
+data:
+  lo_excel_writer type ref to zif_excel_writer,
+  lo_worksheet    type ref to zcl_excel_worksheet.
+
+data: lv_file      type xstring,
+      lv_bytecount type i,
+      lt_file_tab  type solix_tab.
+
+data: lv_full_path      type string,
+      lv_workdir        type string,
+      lv_file_separator type c.
+
+data: lo_excel   type ref to zcl_excel,
+      lo_drawing type ref to zcl_excel_drawing.
+
+
+
+constants: gc_save_file_name type string value 'addimage.xlsx'. "Excel adı
+
+include zdemo_excel_outputopt_incl. "abap2xlsx goruntuleme ayarları
+
+
+start-of-selection.
+
+  " Creates active sheet
+  create object lo_excel.
+
+  "Load samle image
+  data: lt_bin     type solix_tab,
+        lv_len     type i,
+        lv_content type xstring.
+
+  call method cl_gui_frontend_services=>gui_upload "Lt_bin içine url içindeki dosyanın binary verisi yazılır
+    exporting
+      filename                = 'C:\Users\Teampro\OneDrive - Teampro Danışmanlık ve Bilişim Hizmetleri\Masaüstü\Tarım Kredi\CICEK.bmp'
+      filetype                = 'BIN'
+    importing
+      filelength              = lv_len
+    changing
+      data_tab                = lt_bin
+    exceptions
+      file_open_error         = 1
+      file_read_error         = 2
+      no_batch                = 3
+      gui_refuse_filetransfer = 4
+      invalid_type            = 5
+      no_authority            = 6
+      unknown_error           = 7
+      bad_data_format         = 8
+      header_not_allowed      = 9
+      separator_not_allowed   = 10
+      header_too_long         = 11
+      unknown_dp_error        = 12
+      access_denied           = 13
+      dp_out_of_memory        = 14
+      disk_full               = 15
+      dp_timeout              = 16
+      not_supported_by_gui    = 17
+      error_no_gui            = 18
+      others                  = 19.
+
+
+  call function 'SCMS_BINARY_TO_XSTRING' "binary degeri xstringe cevrilir
+    exporting
+      input_length = lv_len
+    importing
+      buffer       = lv_content
+    tables
+      binary_tab   = lt_bin
+    exceptions
+      failed       = 1
+      others       = 2.
+  if sy-subrc <> 0.
+    message id sy-msgid type sy-msgty number sy-msgno
+               with sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  endif.
+
+
+
+initialization.
+  cl_gui_frontend_services=>get_desktop_directory( changing desktop_directory = lv_workdir )."Dosya yolu seçilir
+  cl_gui_cfw=>flush( ).
+  p_path = lv_workdir.
+
+  sy-title = 'Excell add image'."App başlıgı
+
+start-of-selection.
+
+  if p_path is initial.
+    p_path = lv_workdir.
+  endif.
+
+  cl_gui_frontend_services=>get_file_separator( changing file_separator = lv_file_separator ). "
+  concatenate p_path lv_file_separator gc_save_file_name into lv_full_path. "Dosya yolu ve dosya adı birleştirilir
+
+  " Creates active sheet
+  create object lo_excel."Tab (sayfa) oluşturulur
+
+  " Get active sheet
+  lo_worksheet = lo_excel->get_active_worksheet( ). "Excel work tab aktif olur
+  " another drawing from a XSTRING read from a file
+  "Hucreye metib yazılır
+  lo_worksheet->set_cell( ip_column = 'B' ip_row = 8 ip_value = 'Image from a file (C:\Users\Teampro\OneDrive - Teampro Danışmanlık ve Bilişim Hizmetleri\Masaüstü\Tarım Kredi\CICEK.bmp)' ).
+
+  "Çizim işlemi yapılcagı belirtilir
+  lo_drawing = lo_excel->add_new_drawing( ).
+
+
+  lo_drawing->set_position( ip_from_row = 1 "1.satırdan başla
+                            ip_from_col = 'B')."B. kolonundan itibarme
+
+"Set media diyerek ayaralann media içerigi ekelnişr
+  lo_drawing->set_media( ip_media       = lv_content
+                         ip_media_type = zcl_excel_drawing=>c_media_type_bmp "Bmp resim formatinda media tipi seçilir
+                         ip_width = 200 "Genişlik "
+                         ip_height = 100 ). "Yukseklik
+
+  lo_worksheet->add_drawing( lo_drawing ). "Image eklenir
+  " Change the style
+
+"Excel dosyası indişrilir
+
+  create object lo_excel_writer type zcl_excel_writer_2007.
+  lv_file = lo_excel_writer->write_file( lo_excel ).
+
+  " Convert to binary
+  call function 'SCMS_XSTRING_TO_BINARY'
+    exporting
+      buffer        = lv_file
+    importing
+      output_length = lv_bytecount
+    tables
+      binary_tab    = lt_file_tab.
+
+  " Save the file
+  cl_gui_frontend_services=>gui_download( exporting bin_filesize = lv_bytecount
+                                                    filename     = lv_full_path
+                                                    filetype     = 'BIN'
+                                           changing data_tab     = lt_file_tab ).
