@@ -39,7 +39,7 @@ start-of-selection.
 
   call method cl_gui_frontend_services=>gui_upload "Lt_bin içine url içindeki dosyanın binary verisi yazılır
     exporting
-      filename                = 'C:\Users\Teampro\OneDrive - Teampro Danışmanlık ve Bilişim Hizmetleri\Masaüstü\Tarım Kredi\CICEK.bmp'
+      filename                = 'C:\Users\...\..Dosya yolu yapıştırılır.'
       filetype                = 'BIN'
     importing
       filelength              = lv_len
