@@ -1,0 +1,776 @@
+Smartforms çıktı ve excel
+*&---------------------------------------------------------------------*
+*& Report ZSD_PROFORMA_INVOICE
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+REPORT zsd_proforma_invoice MESSAGE-ID vd_pdf..
+
+INCLUDE ole2incl.
+TABLES:
+  nast,
+  tnapr,
+  toa_dara,
+  vbdka,                                          "#EC NEEDED sapscript
+  komk,                                           "#EC NEEDED sapscript
+  tvko,
+  vbkd,
+  vbap,
+  usr21,
+  adrp,
+  tvzbt.                                          "#EC NEEDED sapscript
+
+TYPE-POOLS:
+  szadr.
+DATA:
+  lt_vbdpa TYPE vbdpa_t.
+DATA:gs_nast TYPE nast.
+
+DATA: lf_fm_name            TYPE rs38l_fnam.
+DATA: lf_formname           TYPE tdsfname.
+
+
+DATA : gs_header TYPE zsd_s_invoice_header.
+DATA : gt_item TYPE zsd_t_invoice_item.
+DATA : gs_item LIKE LINE OF gt_item.
+
+
+DATA:
+  gr_badi_print              TYPE REF TO badi_sd_sls_print01,
+
+  gt_komv                    TYPE TABLE OF komv,
+  gt_vedpa                   TYPE TABLE OF vedpa,
+  gt_item_cancellation_dates TYPE vedpn_t,
+  gt_vbtyp_fix_values        TYPE TABLE OF dd07v,
+  gt_add_msg                 TYPE balmi_t,
+
+  gs_interface               TYPE sdoc_s_prt_interface,
+  gs_komk                    TYPE komk,
+
+  gv_screen_display          TYPE char1,
+  gv_price_print_mode        TYPE char1,
+  gv_language                TYPE sylangu,
+  gv_scenario                TYPE c,
+  gv_dummy                   TYPE char1,                    "#EC NEEDED
+
+  gv_output_comm_fax_ext     TYPE c.
+
+FIELD-SYMBOLS:
+  <gs_vbdka>      TYPE vbdka,
+  <gv_returncode> TYPE sysubrc.
+
+CONSTANTS:
+  gc_pr_kappl  TYPE char1 VALUE 'V',
+  gc_true      TYPE char1 VALUE 'X',
+  gc_false     TYPE char1 VALUE space,
+  gc_english   TYPE char1 VALUE 'E',
+  gc_pdf       TYPE char1 VALUE '2',
+  gc_equal     TYPE char2 VALUE 'EQ',
+  gc_include   TYPE char1 VALUE 'I',
+  gc_cash_sale TYPE char1 VALUE 'C',
+  gc_max_brtwr TYPE brtwr VALUE '999999999.99',
+  BEGIN OF gc_nacha,
+    printer       TYPE na_nacha VALUE 1,
+    fax           TYPE na_nacha VALUE 2,
+    external_send TYPE na_nacha VALUE 5,
+  END OF gc_nacha,
+  BEGIN OF gc_device,
+    printer    TYPE output_device VALUE 'P',
+    fax        TYPE output_device VALUE 'F',
+    email      TYPE output_device VALUE 'E',
+    web_dynpro TYPE output_device VALUE 'W',
+  END OF gc_device.
+
+INCLUDE:
+  rvdirekt.
+
+INCLUDE:zsd_generate_excel."Abap2xlsx yapısı için include oluşturalım...
+
+
+
+* >>>>> BUNDLING <<<<< *************************************************
+*INCLUDE check_bundling_print.
+* >>>>> BUNDLING <<<<< *************************************************
+
+*---------------------------------------------------------------------*
+*       FORM ENTRY                                                    *
+*---------------------------------------------------------------------*
+FORM entry                                                  "#EC CALLED
+     USING cv_returncode  TYPE sysubrc
+           uv_screen      TYPE char1.
+
+  TRY.
+*     Get BAdI handle
+      GET BADI gr_badi_print
+        FILTERS
+          filter_order = tnapr-sform.
+    CATCH cx_badi_not_implemented.
+*     This should not occur due to fallback class but to be save...
+      CLEAR gr_badi_print.
+    CATCH cx_badi_multiply_implemented.
+*     Several implementations exist for the filter 'form name'.
+*     This appears to be very unlikely but to be save...
+      CLEAR gr_badi_print.
+  ENDTRY.
+
+* Assign RC
+  ASSIGN cv_returncode TO <gv_returncode>.
+
+* Refresh global data
+  PERFORM initialize_data.
+
+* Set data and start processing
+  gv_screen_display = uv_screen.
+  gs_nast           = nast.
+  PERFORM processing.
+
+ENDFORM.                    "entry
+*&---------------------------------------------------------------------*
+*&      Form  processing
+*&---------------------------------------------------------------------*
+FORM processing.
+  PERFORM get_data.
+  CHECK <gv_returncode> IS INITIAL.
+ENDFORM.                    " processing
+
+*&---------------------------------------------------------------------*
+*&      Form  get_data
+*&---------------------------------------------------------------------*
+FORM get_data.
+
+  DATA:
+    lt_vedka TYPE TABLE OF vedka,
+    lt_mess  TYPE TABLE OF vbfs,
+    ls_comwa TYPE vbco3,
+    ls_mess  TYPE vbfs.
+
+  FIELD-SYMBOLS:
+    <ls_item_detail> TYPE sdoc_s_prt_item_detail.
+
+* Init pricing on demand
+  CALL FUNCTION 'RV_PRICE_PRINT_GET_MODE'
+    IMPORTING
+      e_print_mode = gv_price_print_mode.
+  IF gv_price_print_mode EQ chara.
+    CALL FUNCTION 'RV_PRICE_PRINT_REFRESH'
+      TABLES
+        tkomv = gt_komv.
+  ENDIF.
+
+* Set data and call print view
+  ls_comwa-mandt = sy-mandt.
+  ls_comwa-spras = gs_nast-spras.
+  ls_comwa-vbeln = gs_nast-objky.
+  ls_comwa-kunde = gs_nast-parnr.
+  ls_comwa-parvw = gs_nast-parvw.
+  CALL FUNCTION 'RV_DOCUMENT_PRINT_VIEW'
+    EXPORTING
+      comwa                       = ls_comwa
+    IMPORTING
+      kopf                        = gs_interface-head_detail-vbdka
+    TABLES
+      pos                         = lt_vbdpa
+      mess                        = lt_mess
+    EXCEPTIONS
+      fehler_bei_datenbeschaffung = 1.
+  IF sy-subrc NE 0.
+*   Error whilst data retrieval
+    <gv_returncode> = sy-subrc.
+    PERFORM protocol_update.
+  ENDIF.
+* In create mode if the sales document has no external number and it
+* does not contain any item, yet, the above module undesired returns
+* an item w/ initial POSNR and we have to get rid of it...
+  DELETE lt_vbdpa WHERE posnr EQ posnr_low.
+* Adopt messages into log
+  LOOP AT lt_mess INTO ls_mess.
+    MESSAGE ID ls_mess-msgid TYPE ls_mess-msgty NUMBER ls_mess-msgno
+         WITH ls_mess-msgv1 ls_mess-msgv2 ls_mess-msgv3 ls_mess-msgv4
+         INTO gv_dummy.
+    PERFORM protocol_update.
+  ENDLOOP.
+  CHECK <gv_returncode> IS INITIAL.
+
+* Assign a global pointer to the VBDKA
+  ASSIGN gs_interface-head_detail-vbdka TO <gs_vbdka>.
+
+* Set default language
+  gv_language = gs_nast-spras.
+
+* Set Country for display conversions e.g. WRITE TO
+  SET COUNTRY <gs_vbdka>-land1.
+
+* Fetch servicecontract-data and notice-data for head and position.
+  CALL FUNCTION 'SD_VEDA_GET_PRINT_DATA'
+    EXPORTING
+      i_document_number = <gs_vbdka>-vbeln
+      i_language        = gv_language
+      i_posnr_low       = posnr_low
+    TABLES
+      print_data_pos    = gt_vedpa
+      print_data_head   = lt_vedka
+      print_notice_pos  = gt_item_cancellation_dates
+      print_notice_head = gs_interface-head_detail-cancellation_dates.
+  PERFORM get_data_zs01.
+ENDFORM.                    " get_data
+
+*&---------------------------------------------------------------------*
+*&      Form  protocol_update
+*&---------------------------------------------------------------------*
+FORM protocol_update.
+
+  CHECK gv_screen_display = gc_false.
+  CALL FUNCTION 'NAST_PROTOCOL_UPDATE'
+    EXPORTING
+      msg_arbgb = sy-msgid
+      msg_nr    = sy-msgno
+      msg_ty    = sy-msgty
+      msg_v1    = sy-msgv1
+      msg_v2    = sy-msgv2
+      msg_v3    = sy-msgv3
+      msg_v4    = sy-msgv4
+    EXCEPTIONS
+      OTHERS    = 0.
+
+ENDFORM.                    " protocol_update
+
+
+*&---------------------------------------------------------------------*
+*&      Form  initialize_data
+*&---------------------------------------------------------------------*
+FORM initialize_data.
+
+  CLEAR:
+    gt_vedpa,
+    gt_vbtyp_fix_values,
+    gt_item_cancellation_dates,
+    gt_komv,
+
+    gs_interface,
+    gs_komk,
+    gs_nast,
+
+    gv_screen_display,
+    gv_price_print_mode,
+    gv_language,
+    gv_scenario,
+    gv_dummy,
+
+    <gv_returncode>.
+
+  IF gr_badi_print IS BOUND.
+*   Call BAdI concerning initialization
+    CALL BADI gr_badi_print->initialize_data.
+  ENDIF.
+
+  " is user parameter that combines fax number and fax extension in output control defined?
+  GET PARAMETER ID 'OUTPUT_COMM_FAX_EXT' FIELD gv_output_comm_fax_ext.
+
+ENDFORM.                    " initialize_data
+*&---------------------------------------------------------------------*
+*& Form GET_DATA_ZS01
+*&---------------------------------------------------------------------*
+FORM get_data_zs01 .
+
+  SELECT SINGLE * FROM vbak INTO @DATA(ls_vbak) WHERE vbeln EQ @gs_interface-head_detail-vbdka-vbeln.
+  MOVE-CORRESPONDING ls_vbak TO gs_header.
+
+  SELECT SINGLE * FROM usr21 WHERE bname EQ @gs_header-ernam INTO @DATA(ls_usr21).
+  MOVE-CORRESPONDING ls_usr21 TO gs_header.
+
+  SELECT SINGLE * FROM adrp WHERE persnumber EQ @ls_usr21-persnumber INTO @DATA(ls_adrp).
+  MOVE-CORRESPONDING ls_adrp TO gs_header.
+
+  CONCATENATE gs_header-name_first  gs_header-name_last INTO gs_header-ernam SEPARATED BY space.
+
+  SELECT SINGLE * FROM adr6 WHERE persnumber EQ @ls_usr21-persnumber AND addrnumber EQ @ls_usr21-addrnumber INTO @DATA(ls_adr6).
+  MOVE-CORRESPONDING ls_adr6 TO gs_header.
+
+  SELECT * FROM vbap INTO CORRESPONDING FIELDS OF TABLE @gt_item WHERE vbeln EQ @gs_interface-head_detail-vbdka-vbeln.
+  LOOP AT gt_item INTO gs_item.
+    gs_item-pos_number = sy-tabix.
+    MODIFY gt_item FROM gs_item.
+  ENDLOOP.
+
+  SELECT SINGLE t~vtext FROM vbkd AS v
+  INNER JOIN tvzbt AS t ON t~zterm EQ v~zterm
+  WHERE v~vbeln EQ @gs_interface-head_detail-vbdka-vbeln
+  AND t~spras EQ 'E'
+  INTO @gs_header-vtext.
+
+  "_________________EXCEL________________________________________"
+  DATA lv_ans.
+  CALL FUNCTION 'POPUP_WITH_2_BUTTONS_TO_CHOOSE'
+    EXPORTING
+      diagnosetext1 = 'Çıktı işlemi mi, Excel işlemi mi'
+      textline1     = 'Lütfen Bir Seçim Yapınız.'
+      text_option1  = 'Çıktı'
+      text_option2  = 'Excel'
+      titel         = 'Dikkat'
+    IMPORTING
+      answer        = lv_ans.
+  CHECK lv_ans IS NOT INITIAL.
+  IF lv_ans = '1'.
+    PERFORM print_zs01.
+  ELSEIF lv_ans EQ '2' .
+    IF gs_nast-kschl EQ 'ZW04'.
+      DATA: gv_filename TYPE string,
+            gv_path     TYPE string,
+            gv_fullpath TYPE string.
+
+      gv_filename = sy-datum && '-' && sy-uzeit && 'Proforma Invoice'.
+      CALL METHOD cl_gui_frontend_services=>file_save_dialog
+        EXPORTING
+          window_title      = 'Select file'
+          default_extension = 'xlsx'
+          file_filter       = '*.xlsx'
+        CHANGING
+          filename          = gv_filename
+          path              = gv_path
+          fullpath          = gv_fullpath.
+
+      DATA lo_excel TYPE REF TO zcl_excel.
+      PERFORM download_excel
+        USING
+          gs_header
+          gt_item
+        CHANGING
+          lo_excel
+        .
+
+      lcl_output=>output(
+        EXPORTING
+          cl_excel            = lo_excel
+          iv_path             = gv_fullpath
+      ).
+    ENDIF.
+
+  ENDIF.
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form PRINT_ZS01
+*&---------------------------------------------------------------------*
+FORM print_zs01 .
+  IF gs_nast-kschl EQ 'ZW04'.
+    lf_formname = 'ZSDF_PROFORMA_INVOICE'.
+  ENDIF.
+
+  CALL FUNCTION 'SSF_FUNCTION_MODULE_NAME'
+    EXPORTING
+      formname           = lf_formname
+    IMPORTING
+      fm_name            = lf_fm_name
+    EXCEPTIONS
+      no_form            = 1
+      no_function_module = 2
+      OTHERS             = 3.
+  IF sy-subrc <> 0.
+  ENDIF.
+
+
+  CALL FUNCTION lf_fm_name
+    EXPORTING
+      i_header         = gs_header
+    TABLES
+      i_item           = gt_item
+    EXCEPTIONS
+      formatting_error = 1
+      internal_error   = 2
+      send_error       = 3
+      user_canceled    = 4
+      OTHERS           = 5.
+  IF sy-subrc <> 0.
+* Implement suitable error handling here
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& Include          ZSD_GENERATE_EXCEL
+*&---------------------------------------------------------------------*
+
+CLASS lcl_output DEFINITION CREATE PRIVATE.
+  PUBLIC SECTION.
+    CLASS-METHODS:
+      output         IMPORTING cl_excel            TYPE REF TO zcl_excel
+                               iv_path             TYPE string
+                               iv_writerclass_name TYPE clike OPTIONAL
+                     RAISING   zcx_excel.
+
+  PRIVATE SECTION.
+    METHODS:
+      download_frontend
+        IMPORTING iv_path TYPE string.
+
+    DATA: xdata     TYPE xstring,             " Will be used for sending as email
+          t_rawdata TYPE solix_tab,           " Will be used for downloading or open directly
+          bytecount TYPE i.                   " Will be used for downloading or open directly
+
+
+
+ENDCLASS.
+-----------------INCLUDE:ZSD_GENERATE_EXCEL----------------------------           
+         "lcl_output DEFINITION
+*----------------------------------------------------------------------*
+*       CLASS lcl_output IMPLEMENTATION
+*----------------------------------------------------------------------*
+CLASS lcl_output IMPLEMENTATION.
+  METHOD output.
+
+    DATA: cl_output TYPE REF TO lcl_output,
+          cl_writer TYPE REF TO zif_excel_writer.
+
+    IF iv_writerclass_name IS INITIAL.
+      CREATE OBJECT cl_output.
+      CREATE OBJECT cl_writer TYPE zcl_excel_writer_2007.
+    ELSE.
+      CREATE OBJECT cl_output.
+      CREATE OBJECT cl_writer TYPE (iv_writerclass_name).
+    ENDIF.
+    cl_output->xdata = cl_writer->write_file( cl_excel ).
+
+    cl_output->t_rawdata = cl_bcs_convert=>xstring_to_solix( iv_xstring = cl_output->xdata ).
+    cl_output->bytecount = xstrlen( cl_output->xdata ).
+
+    IF sy-batch IS INITIAL.
+      cl_output->download_frontend( iv_path = iv_path ).
+    ELSE.
+      MESSAGE e802(zabap2xlsx).
+    ENDIF.
+
+  ENDMETHOD.                    "output
+
+  METHOD: download_frontend.
+    DATA: filename TYPE string.
+    filename = iv_path.
+* Get trailing blank
+    cl_gui_frontend_services=>gui_download( EXPORTING bin_filesize = bytecount
+                                                      filename     = filename
+                                                      filetype     = 'BIN'
+                                            CHANGING  data_tab     = t_rawdata ).
+  ENDMETHOD.                    "download_frontend
+
+
+ENDCLASS.                    "lcl_output IMPLEMENTATION
+*&---------------------------------------------------------------------*
+*& Form download_excel
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*&      --> GS_HEADER
+*&      --> GT_ITEM
+*&      <-- LO_EXCEL
+*&---------------------------------------------------------------------*
+FORM download_excel  USING    gs_header TYPE  zsd_s_invoice_header
+                              gt_item TYPE zsd_t_invoice_item
+                              CHANGING lo_excel TYPE REF TO zcl_excel.
+
+  DATA: lo_worksheet TYPE REF TO zcl_excel_worksheet,
+        lo_column    TYPE REF TO zcl_excel_column,
+        lo_hyperlink TYPE REF TO zcl_excel_hyperlink.
+
+  DATA: lo_style_bold_left           TYPE REF TO zcl_excel_style,
+        lo_style_bold_left_underline TYPE REF TO zcl_excel_style,
+        lo_style_red_left            TYPE REF TO zcl_excel_style,
+        lo_style_left                TYPE REF TO zcl_excel_style,
+        lo_style_bold_center         TYPE REF TO zcl_excel_style,
+        lo_style_bold_center_border  TYPE REF TO zcl_excel_style,
+        lo_style_bold_right_border   TYPE REF TO zcl_excel_style,
+        lo_style_center              TYPE REF TO zcl_excel_style,
+        lo_style_center_border       TYPE REF TO zcl_excel_style,
+        lo_style_left_border         TYPE REF TO zcl_excel_style,
+        lo_style_bold_right          TYPE REF TO zcl_excel_style,
+        lo_style_right               TYPE REF TO zcl_excel_style,
+        lo_style_border              TYPE REF TO zcl_excel_style,
+        lo_border_dark               TYPE REF TO zcl_excel_style_border,
+        lo_border_light              TYPE REF TO zcl_excel_style_border.
+
+  DATA: lv_style_bold_left_guid        TYPE zexcel_cell_style,
+        lv_style_bold_left_guid_title  TYPE zexcel_cell_style,
+        lv_style_left_underline_guid   TYPE zexcel_cell_style,
+        lv_style_left_guid             TYPE zexcel_cell_style,
+        lv_style_red_left_guid         TYPE zexcel_cell_style,
+        lv_style_bold_center_guid      TYPE zexcel_cell_style,
+        lv_style_bold_cent_border_guid TYPE zexcel_cell_style,
+        lv_style_bold_rig_border_guid  TYPE zexcel_cell_style,
+        lv_style_center_guid           TYPE zexcel_cell_style,
+        lv_style_cent_border_guid      TYPE zexcel_cell_style,
+        lv_style_left_border_guid      TYPE zexcel_cell_style,
+        lv_style_bold_right_guid       TYPE zexcel_cell_style,
+        lv_style_right_guid            TYPE zexcel_cell_style,
+        lv_style_border_guid           TYPE zexcel_cell_style.
+
+  DATA: lo_drawing   TYPE REF TO zcl_excel_drawing.
+
+  DATA: lt_field_catalog  TYPE zexcel_t_fieldcatalog,
+        ls_table_settings TYPE zexcel_s_table_settings.
+
+  FIELD-SYMBOLS: <fs_field_catalog> TYPE zexcel_s_fieldcatalog.
+
+  CREATE OBJECT lo_excel.
+
+  DATA: lt_bin     TYPE solix_tab,
+        lv_len     TYPE i,
+        lv_content TYPE xstring,
+        ls_key     TYPE wwwdatatab.
+
+  CREATE OBJECT lo_border_dark.
+  lo_border_dark->border_color-rgb = zcl_excel_style_color=>c_black.
+  lo_border_dark->border_style = zcl_excel_style_border=>c_border_medium.
+
+  CREATE OBJECT lo_border_light.
+  lo_border_light->border_color-rgb = zcl_excel_style_color=>c_black.
+  lo_border_light->border_style = zcl_excel_style_border=>c_border_thin.
+
+  " left bold black
+  lo_style_bold_left               = lo_excel->add_new_style( ).
+  lo_style_bold_left->font->bold   = abap_true.
+  lo_style_bold_left->font->name   = zcl_excel_style_font=>c_name_arial.
+  lo_style_bold_left->font->scheme = zcl_excel_style_font=>c_scheme_none.
+  lo_style_bold_left->font->size = 15.
+  lv_style_bold_left_guid          = lo_style_bold_left->get_guid( ).
+
+  lo_style_bold_left               = lo_excel->add_new_style( ).
+  lo_style_bold_left->font->bold   = abap_true.
+  lo_style_bold_left->font->name   = zcl_excel_style_font=>c_name_arial.
+  lo_style_bold_left->font->scheme = zcl_excel_style_font=>c_scheme_none.
+  lo_style_bold_left->font->size = 35.
+  lv_style_bold_left_guid_title          = lo_style_bold_left->get_guid( ).
+
+
+
+  " left bold underline black
+  lo_style_bold_left_underline               = lo_excel->add_new_style( ).
+  lo_style_bold_left_underline->font->bold   = abap_true.
+  lo_style_bold_left_underline->font->name   = zcl_excel_style_font=>c_name_arial.
+  lo_style_bold_left_underline->font->scheme = zcl_excel_style_font=>c_scheme_none.
+  lo_style_bold_left_underline->font->underline       = abap_true.
+  lo_style_bold_left_underline->font->underline_mode  = zcl_excel_style_font=>c_underline_single.
+  lo_style_bold_left_underline->font->size = 15.
+
+  lv_style_left_underline_guid          = lo_style_bold_left_underline->get_guid( ).
+
+  "left black
+  lo_style_left                  = lo_excel->add_new_style( ).
+  lo_style_left->font->name      = zcl_excel_style_font=>c_name_arial.
+  lo_style_left->font->scheme    = zcl_excel_style_font=>c_scheme_none.
+  lo_style_left->font->size = 15.
+  lv_style_left_guid             = lo_style_left->get_guid( ).
+
+  "left red
+  lo_style_red_left                   = lo_excel->add_new_style( ).
+  lo_style_red_left->font->name      = zcl_excel_style_font=>c_name_arial.
+  lo_style_red_left->font->scheme    = zcl_excel_style_font=>c_scheme_none.
+  lo_style_red_left->font->color-rgb = zcl_excel_style_color=>c_red.
+  lo_style_red_left->font->size = 15.
+  lv_style_red_left_guid              = lo_style_red_left->get_guid( ).
+
+  "center bold black
+  lo_style_bold_center                        = lo_excel->add_new_style( ).
+  lo_style_bold_center->font->bold            = abap_true.
+  lo_style_bold_center->font->name            = zcl_excel_style_font=>c_name_arial.
+  lo_style_bold_center->font->scheme          = zcl_excel_style_font=>c_scheme_none.
+  lo_style_bold_center->alignment->horizontal = zcl_excel_style_alignment=>c_horizontal_center.
+  lo_style_bold_center->font->size = 15.
+  lv_style_bold_center_guid                   = lo_style_bold_center->get_guid( ).
+
+  "center bold black border
+  lo_style_bold_center_border                        = lo_excel->add_new_style( ).
+  lo_style_bold_center_border->font->bold            = abap_true.
+  lo_style_bold_center_border->font->name            = zcl_excel_style_font=>c_name_arial.
+  lo_style_bold_center_border->font->scheme          = zcl_excel_style_font=>c_scheme_none.
+  lo_style_bold_center_border->alignment->horizontal = zcl_excel_style_alignment=>c_horizontal_center.
+  lo_style_bold_center_border->borders->right        = lo_border_dark.
+  lo_style_bold_center_border->borders->down         = lo_border_dark.
+  lo_style_bold_center_border->borders->left         = lo_border_dark.
+  lo_style_bold_center_border->borders->top          = lo_border_dark.
+  lo_style_bold_center_border->font->size = 15.
+  lv_style_bold_cent_border_guid                   = lo_style_bold_center_border->get_guid( ).
+
+  "center black
+  lo_style_center                         = lo_excel->add_new_style( ).
+  lo_style_center->font->name             = zcl_excel_style_font=>c_name_arial.
+  lo_style_center->font->scheme           = zcl_excel_style_font=>c_scheme_none.
+  lo_style_center->alignment->horizontal  = zcl_excel_style_alignment=>c_horizontal_center.
+  lo_style_center->font->size = 15.
+  lv_style_center_guid                    = lo_style_center->get_guid( ).
+
+  "center black border
+  lo_style_center_border                         = lo_excel->add_new_style( ).
+  lo_style_center_border->font->name             = zcl_excel_style_font=>c_name_arial.
+  lo_style_center_border->font->scheme           = zcl_excel_style_font=>c_scheme_none.
+  lo_style_center_border->alignment->horizontal  = zcl_excel_style_alignment=>c_horizontal_center.
+  lo_style_center_border->borders->right         = lo_border_light.
+  lo_style_center_border->borders->down          = lo_border_light.
+  lo_style_center_border->borders->left          = lo_border_light.
+  lo_style_center_border->borders->top           = lo_border_light.
+  lo_style_center_border->font->size = 15.
+  lv_style_cent_border_guid                      = lo_style_center_border->get_guid( ).
+
+  "LEFT black border
+  lo_style_left_border                         = lo_excel->add_new_style( ).
+  lo_style_left_border->font->name             = zcl_excel_style_font=>c_name_arial.
+  lo_style_left_border->font->scheme           = zcl_excel_style_font=>c_scheme_none.
+  lo_style_left_border->alignment->horizontal  = zcl_excel_style_alignment=>c_horizontal_left.
+  lo_style_left_border->borders->right         = lo_border_light.
+  lo_style_left_border->borders->down          = lo_border_light.
+  lo_style_left_border->borders->left          = lo_border_light.
+  lo_style_left_border->borders->top           = lo_border_light.
+  lo_style_left_border->font->size = 15.
+  lv_style_left_border_guid                      = lo_style_left_border->get_guid( ).
+
+  "right black
+  lo_style_right                         = lo_excel->add_new_style( ).
+  lo_style_right->font->name             = zcl_excel_style_font=>c_name_arial.
+  lo_style_right->font->scheme           = zcl_excel_style_font=>c_scheme_none.
+  lo_style_right->alignment->horizontal  = zcl_excel_style_alignment=>c_horizontal_right.
+  lo_style_right->font->size = 15.
+  lv_style_right_guid                    = lo_style_right->get_guid( ).
+
+  " Get active sheet
+  lo_worksheet = lo_excel->get_active_worksheet( ).
+  lo_worksheet->set_title( ip_title = 'Proforma Invoice' ).
+
+
+  ls_key-relid = 'MI'.
+  "se78'e atılan logo ismi ile SMW0 tcode gidilir rfc verileri seçilir nesne adı se78 de belirtilen isim yazılır,
+  Ayarlar->MIME düzenleyici seçilir->MIME tipi = image/bmp->düzenle = bmp->> bu adımlar ile kaydedilir ve logo nereye kayıtlı ise örneğin masaüstü oradan          seçilir ve işlem tamamdır.
+  ls_key-objid = 'ZWELLE01'. 
+  lo_drawing = lo_excel->add_new_drawing( ).
+  lo_drawing->set_position( ip_from_row = 1 ip_from_col = 'E' ).
+  lo_drawing->set_media_www( ip_key = ls_key ip_width = 250 ip_height = 150 ).
+  lo_worksheet->add_drawing( lo_drawing ).
+
+
+  lo_worksheet->set_cell( ip_column = 'A' ip_row = 2 ip_value = 'İnoks Metal Yapı Sistemleri Dış. Tic. ve İml. Koll. Şti' ip_style =      lv_style_bold_left_guid ).
+  lo_worksheet->set_cell( ip_column = 'A' ip_row = 3 ip_value = 'Ali Rıza Efendi Cad. Kat: 2 Bk.d.k.n:2 B1 ' ip_style = lv_style_bold_left_guid ).
+  lo_worksheet->set_cell( ip_column = 'A' ip_row = 4 ip_value = 'Çatalca' ip_style = lv_style_bold_left_guid ).
+  lo_worksheet->set_cell( ip_column = 'A' ip_row = 5 ip_value = '34540 Çatalca' ip_style = lv_style_bold_left_guid ).
+  lo_worksheet->set_cell( ip_column = 'A' ip_row = 6 ip_value = 'TURKEY' ip_style = lv_style_bold_left_guid ).
+
+  "Musteri Bilgi
+  lo_worksheet->set_cell( ip_column = 'A' ip_row = 8 ip_value = 'Customer Vat-No:' ip_style = lv_style_bold_left_guid ).
+  lo_worksheet->set_cell( ip_column = 'A' ip_row = 9 ip_value = 'Doc Date:' ip_style = lv_style_bold_left_guid ).
+  lo_worksheet->set_cell( ip_column = 'A' ip_row = 10 ip_value = 'Invoice No:' ip_style = lv_style_bold_left_guid ).
+  lo_worksheet->set_cell( ip_column = 'A' ip_row = 11 ip_value = 'Person In Charge:' ip_style = lv_style_bold_left_guid ).
+  lo_worksheet->set_cell( ip_column = 'A' ip_row = 12 ip_value = 'Reference:' ip_style = lv_style_bold_left_guid ).
+
+  lo_worksheet->set_cell( ip_column = 'B' ip_row = 8 ip_value = gs_header-kunnr ip_style = lv_style_bold_left_guid ).
+  lo_worksheet->set_cell( ip_column = 'B' ip_row = 9 ip_value = gs_header-audat ip_style = lv_style_bold_left_guid ).
+  lo_worksheet->set_cell( ip_column = 'B' ip_row = 10 ip_value = gs_header-vbeln ip_style = lv_style_bold_left_guid ).
+  lo_worksheet->set_cell( ip_column = 'B' ip_row = 11 ip_value = gs_header-ernam ip_style = lv_style_bold_left_guid ).
+
+  "Firma Bilgileri
+  lo_worksheet->set_cell( ip_column = 'D' ip_row = 7 ip_value = 'ZELLE İÇ VE DIŞ TİCARET LTD. ŞTİ' ip_style = lv_style_bold_left_guid ).
+  lo_worksheet->set_cell( ip_column = 'D' ip_row = 8 ip_value = 'Address :' ip_style = lv_style_bold_left_guid ).
+  lo_worksheet->set_cell( ip_column = 'D' ip_row = 9 ip_value = 'Phone:' ip_style = lv_style_bold_left_guid ).
+  lo_worksheet->set_cell( ip_column = 'D' ip_row = 10 ip_value = 'Fax:' ip_style = lv_style_bold_left_guid ).
+  lo_worksheet->set_cell( ip_column = 'D' ip_row = 11 ip_value = 'Tax Office:' ip_style = lv_style_bold_left_guid ).
+
+  lo_worksheet->set_cell( ip_column = 'E' ip_row = 8 ip_value = 'Dudullu OSB Mah. İmes Sanayi Sitesi A Blok 104. Sk. No:9' ip_style = lv_style_bold_left_guid ).
+  lo_worksheet->set_cell( ip_column = 'E' ip_row = 9 ip_value = '+90 216 364 58 45' ip_style = lv_style_bold_left_guid ).
+  lo_worksheet->set_cell( ip_column = 'E' ip_row = 10 ip_value = '+90 216 364 58 33' ip_style = lv_style_bold_left_guid ).
+  lo_worksheet->set_cell( ip_column = 'E' ip_row = 11 ip_value = 'Sarıgazi / 997 106 9864' ip_style = lv_style_bold_left_guid ).
+
+  "Başlık
+  lo_worksheet->set_cell( ip_column = 'C' ip_row = 15 ip_value = 'PROFORMA INVOICE' ip_style = lv_style_bold_left_guid_title ).
+
+  "Teklif Başlık
+  lo_worksheet->set_cell( ip_column = 'A' ip_row = 18 ip_value = 'Pos.' ip_style = lv_style_bold_cent_border_guid ).
+  lo_worksheet->set_cell( ip_column = 'B' ip_row = 18 ip_value = 'SAP Stock No' ip_style = lv_style_bold_cent_border_guid ).
+  lo_worksheet->set_cell( ip_column = 'C' ip_row = 18 ip_value = 'Item Description' ip_style = lv_style_bold_cent_border_guid ).
+  lo_worksheet->set_cell( ip_column = 'D' ip_row = 18 ip_value = 'Quantity' ip_style = lv_style_bold_cent_border_guid ).
+  lo_worksheet->set_cell( ip_column = 'E' ip_row = 18 ip_value = 'Price' ip_style = lv_style_bold_cent_border_guid ).
+
+  "Teklif Item
+  DATA(lv_row) = 19. "Bu işlemi veriler çoğalınca üst üste gelemsin ve alt alta sıralansın diye yazılır.
+  LOOP AT gt_item ASSIGNING FIELD-SYMBOL(<lfs_pack_excel>).
+
+    lo_worksheet->set_cell( ip_column = 'A' ip_row = lv_row ip_value = <lfs_pack_excel>-pos_number ip_style = lv_style_bold_left_guid  ).
+    lo_worksheet->set_cell( ip_column = 'B' ip_row = lv_row ip_value = <lfs_pack_excel>-matnr ip_style = lv_style_bold_left_guid  ).
+    lo_worksheet->set_cell( ip_column = 'C' ip_row = lv_row ip_value = <lfs_pack_excel>-arktx ip_style = lv_style_bold_left_guid  ).
+    lo_worksheet->set_cell( ip_column = 'D' ip_row = lv_row ip_value = <lfs_pack_excel>-kwmeng ip_style = lv_style_bold_left_guid  ).
+    lo_worksheet->set_cell( ip_column = 'E' ip_row = lv_row ip_value = <lfs_pack_excel>-netpr ip_style = lv_style_bold_left_guid  ).
+
+    ADD 1 TO lv_row.
+    lo_worksheet->set_cell( ip_column = 'C' ip_row = lv_row ip_value = 'Machine Type:' ip_style = lv_style_bold_left_guid ).
+    ADD 1 TO lv_row.
+    lo_worksheet->set_cell( ip_column = 'C' ip_row = lv_row ip_value = 'MODEL:' ip_style = lv_style_bold_left_guid  ).
+    ADD 1 TO lv_row.
+    lo_worksheet->set_cell( ip_column = 'C' ip_row = lv_row ip_value = 'Build Year:' ip_style = lv_style_bold_left_guid ).
+    ADD 4 TO lv_row.
+  ENDLOOP.
+
+  lo_worksheet->set_cell( ip_column = 'A' ip_row = lv_row ip_value = 'Terms of Delivery:' ip_style = lv_style_bold_left_guid  ).
+  lo_worksheet->set_cell( ip_column = 'B' ip_row = lv_row ip_value = 'Machines are without guarantee. Exclusive loading costs, transport costs and machine installation costs are under buyer‘s responsibility.' ip_style = lv_style_bold_left_guid  ).
+  ADD 1 TO lv_row.
+  lo_worksheet->set_cell( ip_column = 'A' ip_row = lv_row ip_value = 'Terms of Payment:' ip_style = lv_style_bold_left_guid  ).
+  lo_worksheet->set_cell( ip_column = 'B' ip_row = lv_row ip_value = gs_header-vtext ip_style = lv_style_bold_left_guid  ).
+  ADD 1 TO lv_row.
+  lo_worksheet->set_cell( ip_column = 'A' ip_row = lv_row ip_value = 'Delivery Date:' ip_style = lv_style_bold_left_guid  ).
+  lo_worksheet->set_cell( ip_column = 'B' ip_row = lv_row ip_value = gs_header-vdatu ip_style =  lv_style_bold_left_guid   ).
+
+  ADD 2 TO lv_row.
+  lo_worksheet->set_cell( ip_column = 'B' ip_row = lv_row ip_value = '* (Exchange rate is given for informational purposes. May vary due to an agreement or special conditions and requirements.)' ip_style = lv_style_bold_left_guid  ).
+
+  ADD 3 TO lv_row.
+  lo_worksheet->set_cell( ip_column = 'A' ip_row = lv_row ip_value = 'BANK NAME :' ip_style = lv_style_bold_left_guid  ).
+  lo_worksheet->set_cell( ip_column = 'B' ip_row = lv_row ip_value = 'HALKBANK' ip_style = lv_style_bold_left_guid ).
+  ADD 1 TO lv_row.
+  lo_worksheet->set_cell( ip_column = 'A' ip_row = lv_row ip_value = 'BRANCH NAME/CODE :' ip_style = lv_style_bold_left_guid  ).
+  lo_worksheet->set_cell( ip_column = 'B' ip_row = lv_row ip_value = 'İMES ŞUBESİ/855' ip_style = lv_style_bold_left_guid  ).
+  ADD 1 TO lv_row.
+  lo_worksheet->set_cell( ip_column = 'A' ip_row = lv_row ip_value = 'TL:' ip_style = lv_style_bold_left_guid  ).
+  lo_worksheet->set_cell( ip_column = 'B' ip_row = lv_row ip_value = 'TR70 0001 2009 8550 0010 2610 52' ip_style = lv_style_bold_left_guid  ).
+  lo_worksheet->set_cell( ip_column = 'D' ip_row = lv_row ip_value = 'TAX OFFICE :' ip_style = lv_style_bold_left_guid  ).
+  lo_worksheet->set_cell( ip_column = 'E' ip_row = lv_row  ip_value = 'SARIGAZİ' ip_style = lv_style_bold_left_guid  ).
+  ADD 1 TO lv_row.
+  lo_worksheet->set_cell( ip_column = 'A' ip_row = lv_row ip_value = 'USD:' ip_style = lv_style_bold_left_guid  ).
+  lo_worksheet->set_cell( ip_column = 'B' ip_row = lv_row ip_value = 'TR94 0001 2009 8550 0053 0009 54' ip_style = lv_style_bold_left_guid  ).
+  lo_worksheet->set_cell( ip_column = 'D' ip_row = lv_row  ip_value = 'TAX NUMBER :' ip_style = lv_style_bold_left_guid ).
+  lo_worksheet->set_cell( ip_column = 'E' ip_row = lv_row  ip_value = '9971069864' ip_style = lv_style_bold_left_guid  ).
+  ADD 1 TO lv_row.
+  lo_worksheet->set_cell( ip_column = 'A' ip_row = lv_row ip_value = 'EUR :' ip_style = lv_style_bold_left_guid ).
+  lo_worksheet->set_cell( ip_column = 'B' ip_row = lv_row ip_value = 'TR56 0001 2009 8550 0058 0005 33' ip_style = lv_style_bold_left_guid ).
+  ADD 1 TO lv_row.
+  lo_worksheet->set_cell( ip_column = 'A' ip_row = lv_row ip_value = 'SWIFT KODU :' ip_style = lv_style_bold_left_guid  ).
+  lo_worksheet->set_cell( ip_column = 'B' ip_row = lv_row ip_value = 'TRHBTR2AXXX' ip_style = lv_style_bold_left_guid  ).
+
+
+  ls_key-relid = 'MI'.
+  ls_key-objid = 'ZSAP_METAL'.
+  lo_drawing = lo_excel->add_new_drawing( ).
+  lo_drawing->set_position( ip_from_row = lv_row ip_from_col = 'E' ).
+  lo_drawing->set_media_www( ip_key = ls_key ip_width = 250 ip_height = 150 ).
+  lo_worksheet->add_drawing( lo_drawing ).
+
+
+
+  lo_column = lo_worksheet->get_column( ip_column = 'A' ).
+  lo_column->set_width( ip_width = 50 )."Kolon genişliği
+
+  lo_column = lo_worksheet->get_column( ip_column = 'B' ).
+  lo_column->set_width( ip_width = 50 ).
+
+  lo_column = lo_worksheet->get_column( ip_column = 'C' ).
+  lo_column->set_width( ip_width = 50 ).
+
+  lo_column = lo_worksheet->get_column( ip_column = 'D' ).
+  lo_column->set_width( ip_width = 70 ).
+
+  lo_column = lo_worksheet->get_column( ip_column = 'E' ).
+  lo_column->set_width( ip_width = 33 ).
+
+  lo_column = lo_worksheet->get_column( ip_column = 'F' ).
+  lo_column->set_width( ip_width = 30 ).
+
+  lo_column = lo_worksheet->get_column( ip_column = 'G' ).
+  lo_column->set_width( ip_width = 28 ).
+
+  lo_column = lo_worksheet->get_column( ip_column = 'H' ).
+  lo_column->set_width( ip_width = 20 ).
+
+  lo_column = lo_worksheet->get_column( ip_column = 'I' ).
+  lo_column->set_width( ip_width = 15 ).
+
+ENDFORM.

@@ -1,0 +1,12 @@
+Abap2xlsx kurulumu
+
+1-se38 = ZABAPGIT_STANDALONE program oluşturulur.
+2-abap code (ekte bulunmaktadır)
+3-Utilities -> More Utilities -> Upload/Download -> Upload
+4-active edilir program çalıştırılır.
+5-https://github.com/abap2xlsx/abap2xlsx ->Releases->Source code zip indirilir.
+6-New Offline ->Repo name = zabap2xlsx ->package = zabap2xlsx ->create package
+7-İmport zip tıklanır githupta indirilen zip alınır Pull zip'e tıklanır.
+
+...........Abap2xlsx Excel için kurulum hazır............
+ 
