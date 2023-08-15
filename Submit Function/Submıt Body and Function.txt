@@ -1,0 +1,76 @@
+ Body = ZINVOICE_UPDATE = CHANGE_AT_SAVE
+"______________GK_______
+
+    IF sy-tcode EQ 'MIRO'.
+      SELECT SINGLE mandt FROM zeinv WHERE blart EQ @s_rbkp_new-blart INTO @sy-mandt.
+      IF sy-subrc EQ 0.
+
+        DATA e_size    TYPE int4.
+
+                                  .
+        CALL FUNCTION 'ZMM_FM_MIRO_CHECK_REPORT'
+          EXPORTING
+            iv_efatid = CONV zeinv_s007-efatid( s_rbkp_new-xblnr )
+            iv_lifnr  = CONV zeinv_s007-lifnr( s_rbkp_new-lifnr )
+          IMPORTING
+            e_size    = e_size.
+
+
+        IF e_size GT 0.
+          MESSAGE | { s_rbkp_new-lifnr } Kayıt Olanaksız..!| TYPE 'E'.
+        ENDIF.
+      ENDIF.
+    ENDIF.
+    "____________________________________________________________
+
+se37 =  Function Module
+ZMM_FM_MIRO_CHECK_REPORT
+
+FUNCTION zmm_fm_miro_check_report.
+*"----------------------------------------------------------------------
+*"*"Local Interface:
+*"  IMPORTING
+*"     REFERENCE(IV_EFATID) TYPE  ZEINV_T031-EFATID
+*"     REFERENCE(IV_LIFNR) TYPE  LFA1-LIFNR
+*"  EXPORTING
+*"     REFERENCE(E_SIZE) TYPE  INT4
+*"----------------------------------------------------------------------
+
+  DATA: lr_data TYPE REF TO data.
+  FIELD-SYMBOLS:<fs_table> TYPE STANDARD TABLE.
+
+  cl_salv_bs_runtime_info=>clear_all( ).
+
+  cl_salv_bs_runtime_info=>set(
+    EXPORTING
+      display  = abap_false
+      metadata = abap_true
+      data     = abap_true ).
+"CHECKBOXU X ATIYOR "ALAN EKLINIR
+  SUBMIT zeinv_p003
+     WITH s_eftid = iv_efatid
+     WITH s_lifnr = iv_lifnr
+     WITH c_tumu  = 'X' "Tüm Carileri Getir
+     WITH C_BELNR = 'X'"Muhasebe Belgesini Getir
+     WITH R_ALL   = 'X'"Tümü
+     WITH R_TFAT  = 'X'"Tüm Fatura Senaryoları
+     WITH R_TUMU  = 'X'"Tüm Faturalar
+     AND RETURN.
+
+  TRY."BURDADA RAPORDAN DONEN TABLO REFERANS TIPINDE ALINIR
+      cl_salv_bs_runtime_info=>get_data_ref(
+        IMPORTING
+          r_data = lr_data ).
+    CATCH cx_salv_bs_sc_runtime_info.
+      MESSAGE 'Veri çekerken hata oluştu'(002) TYPE 'E'.
+  ENDTRY.
+  cl_salv_bs_runtime_info=>clear_all( )."KULLANICIN PROGRAM UZERINDEN CIKARTILIR
+
+  ASSIGN lr_data->* TO <fs_table>."REFERANSI FIELDSYMBOL TABLOYA ASSIGN EDILIR
+
+
+  CHECK <fs_table> IS ASSIGNED."EGER ASSIGN ETMEDE PROBLEM YOKSA
+  DESCRIBE TABLE <fs_table> LINES e_size."TABLODAKI KAYIT SAYISI ALINIR YANI DEGER GELDI MI GELMEDI MI BAKILIR
+
+
+ENDFUNCTION.

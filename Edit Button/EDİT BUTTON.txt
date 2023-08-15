@@ -1,0 +1,218 @@
+EDİT BUTTON
+
+*&---------------------------------------------------------------------*
+*& Report ZGK_EDIT_BUTTON
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+REPORT ZGK_EDIT_BUTTON.
+INCLUDE ZGK_EDIT_BUTTON_TOP.
+INCLUDE ZGK_EDIT_BUTTON_SLC.
+INCLUDE ZGK_EDIT_BUTTON_CLS.
+INCLUDE ZGK_EDIT_BUTTON_SRC.
+INITIALIZATION.
+CREATE OBJECT GO_REPORT.
+START-OF-SELECTION.
+GO_REPORT->GET_DATA(  ).
+GO_REPORT->PREPARE_DISPLAY(  ).
+GO_REPORT->DISPLAY_ALV(  ).
+CALL SCREEN 0100.
+*&---------------------------------------------------------------------*
+*&  Include           ZGK_EDIT_BUTTON_TOP
+*&---------------------------------------------------------------------*
+class cls_report definition deferred.
+tables:scarr.
+data: go_report  type ref to cls_report,
+      gt_alv_tab type table of scarr.
+data: alv_grid  type ref to cl_gui_alv_grid,
+      fieldcat  type lvc_t_fcat,
+      gv_change type xfeld VALUE 'X'.
+*&---------------------------------------------------------------------*
+*&  Include           ZGK_EDIT_BUTTON_SLC
+*&---------------------------------------------------------------------*
+SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-000.
+PARAMETERS p_carrid TYPE SCARR-carrid.
+SELECTION-SCREEN END OF BLOCK b1.
+*&---------------------------------------------------------------------*
+*&  Include           ZGK_EDIT_BUTTON_CLS
+*&---------------------------------------------------------------------*
+CLASS cls_events DEFINITION .
+  PROTECTED SECTION.
+    METHODS:
+      handle_top_of_page   FOR EVENT top_of_page OF cl_gui_alv_grid IMPORTING e_dyndoc_id table_index,
+      handle_hotspot_click FOR EVENT hotspot_click OF cl_gui_alv_grid IMPORTING e_row_id e_column_id,
+      handle_double_click  FOR EVENT double_click OF cl_gui_alv_grid IMPORTING e_row e_column es_row_no,
+      handle_data_changed  FOR EVENT data_changed OF cl_gui_alv_grid IMPORTING er_data_changed e_onf4 e_onf4_before e_onf4_after e_ucomm,
+      handle_button_click  FOR EVENT button_click OF cl_gui_alv_grid IMPORTING es_col_id es_row_no,
+      handle_onf4          FOR EVENT onf4 OF cl_gui_alv_grid IMPORTING e_fieldname e_fieldvalue es_row_no er_event_data et_bad_cells e_display,
+      handle_toolbar       FOR EVENT toolbar OF cl_gui_alv_grid IMPORTING e_object e_interactive,
+      handle_user_command  FOR EVENT user_command OF cl_gui_alv_grid IMPORTING e_ucomm.
+
+ENDCLASS.
+
+CLASS cls_events IMPLEMENTATION.
+  METHOD handle_top_of_page.
+  ENDMETHOD.
+
+  METHOD handle_hotspot_click.
+  ENDMETHOD.
+
+  METHOD handle_double_click.
+    DELETE gt_alv_tab INDEX es_row_no-row_id.
+    alv_grid->refresh_table_display( ).
+  ENDMETHOD.
+
+  METHOD handle_data_changed.
+  ENDMETHOD.
+
+  METHOD handle_button_click.
+  ENDMETHOD.
+
+  METHOD handle_onf4.
+  ENDMETHOD.
+
+  METHOD handle_toolbar.
+DATA LS_TOOLBAR TYPE STB_BUTTON.
+MOVE 0 TO LS_TOOLBAR-butn_type.
+MOVE 'DETAILS' TO LS_TOOLBAR-function.
+MOVE ICON_SELECT_DETAIL TO LS_TOOLBAR-icon.
+MOVE 'QWE' TO LS_TOOLBAR-quickinfo.
+MOVE 'QWE' TO LS_TOOLBAR-text.
+DATA(IS_CHANGE_X) = COND #( WHEN GV_CHANGE EQ 'X' THEN '' ELSE 'X' ).
+MOVE IS_CHANGE_X TO LS_TOOLBAR-disabled.
+APPEND ls_toolbar TO e_object->mt_toolbar.
+  ENDMETHOD.
+
+  METHOD handle_user_command.
+  ENDMETHOD.
+ENDCLASS.
+
+*//////////////////////////////////////////////////////////////////////////////////////////////
+CLASS cls_report DEFINITION INHERITING FROM cls_events .
+  PUBLIC SECTION.
+    METHODS :get_data,prepare_display,display_alv.
+
+  PRIVATE SECTION.
+    CONSTANTS: lc_alv_structre TYPE dd02l-tabname VALUE 'SCARR'.
+    DATA: layout   TYPE lvc_s_layo,
+
+          variant  TYPE disvariant.
+
+ENDCLASS.
+
+*----------------------------------------------------------------------*
+*       CLASS CLS_LOCAL IMPLEMENTATION
+*----------------------------------------------------------------------*
+CLASS cls_report IMPLEMENTATION.
+  METHOD get_data.
+    SELECT * FROM scarr INTO TABLE gt_alv_tab.
+    CHECK sy-subrc IS INITIAL.
+    cl_progress_indicator=>progress_indicate( i_text = |Processing..|
+                                      i_processed = sy-tabix
+                                      i_total = lines( gt_alv_tab )
+                                      i_output_immediately = 'X' ).
+  ENDMETHOD.
+
+  METHOD prepare_display.
+
+    CLEAR layout.
+    layout-zebra      = 'X'.
+    layout-col_opt    = 'X'.
+    layout-cwidth_opt = 'X'.
+    layout-edit =  'X'.
+    variant-report = sy-repid.
+
+    REFRESH  fieldcat.
+    CALL FUNCTION 'LVC_FIELDCATALOG_MERGE'
+      EXPORTING
+        i_structure_name = lc_alv_structre
+      CHANGING
+        ct_fieldcat      = fieldcat
+      EXCEPTIONS
+        OTHERS           = 0.
+
+  ENDMETHOD.
+
+  METHOD display_alv.
+    IF alv_grid IS INITIAL .
+      CREATE OBJECT alv_grid
+        EXPORTING
+          i_parent = cl_gui_custom_container=>screen0
+        EXCEPTIONS
+          OTHERS   = 0.
+      SET HANDLER me->handle_double_click FOR alv_grid.
+      SET HANDLER me->handle_toolbar FOR alv_grid.
+      CALL METHOD alv_grid->set_table_for_first_display
+        EXPORTING
+          is_layout                     = layout
+          i_save                        = 'A'
+          i_default                     = 'X'
+          is_variant                    = variant
+        CHANGING
+          it_outtab                     = gt_alv_tab
+          it_fieldcatalog               = fieldcat
+        EXCEPTIONS
+          invalid_parameter_combination = 1
+          program_error                 = 2
+          too_many_lines                = 3
+          OTHERS                        = 4.
+      IF sy-subrc IS INITIAL.
+        CALL METHOD alv_grid->register_edit_event
+          EXPORTING
+            i_event_id = cl_gui_alv_grid=>mc_evt_modified
+          EXCEPTIONS
+            error      = 1
+            OTHERS     = 2.
+
+        CALL METHOD alv_grid->register_edit_event
+          EXPORTING
+            i_event_id = cl_gui_alv_grid=>mc_evt_enter
+          EXCEPTIONS
+            error      = 1
+            OTHERS     = 2.
+      ENDIF.
+    ELSE.
+      CALL METHOD alv_grid->refresh_table_display( ).
+    ENDIF.
+  ENDMETHOD.
+
+ENDCLASS.
+*&---------------------------------------------------------------------*
+*&  Include           ZGK_EDIT_BUTTON_SRC
+*&---------------------------------------------------------------------*
+*&---------------------------------------------------------------------*
+*&      Module  STATUS_0100  OUTPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+MODULE status_0100 OUTPUT.
+  if gv_change eq 'X'.
+    set pf-status '0300'.
+  else.
+
+    set pf-status '0200'.
+  endif.
+  set titlebar text-001.
+ENDMODULE.
+*&---------------------------------------------------------------------*
+*&      Module  USER_COMMAND_0100  INPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+MODULE user_command_0100 INPUT.
+case sy-ucomm(4).
+    when '&F03' or '&F12' or '&F15'.
+      set screen 0.
+    when 'CHAN' .
+      gv_change = cond #( when gv_change eq 'X' then '' else 'X' ).
+      alv_grid->set_ready_for_input(
+          i_ready_for_input = cond #( when gv_change eq 'X' then 1 else 0 )
+      ).
+
+      alv_grid->refresh_table_display(
+        exceptions
+          finished       = 1
+          others         = 2
+      ).
+  endcase.
+ENDMODULE.
